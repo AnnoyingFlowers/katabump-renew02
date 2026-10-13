@@ -1,0 +1,56 @@
+name: SeleniumBase UC Probe (No Credentials)
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/uc-probe.yml
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install SeleniumBase and display
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y xvfb xdotool scrot
+          python -m pip install seleniumbase
+          seleniumbase install chromedriver
+      - name: Probe login Turnstile (no account, no renewal)
+        run: |
+          xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" python - <<'PY'
+          import time
+          from seleniumbase import SB
+
+          URL = "https://dashboard.katabump.com/auth/login"
+          with SB(uc=True, headless=False) as sb:
+              sb.uc_open_with_reconnect(URL, reconnect_time=8)
+              time.sleep(5)
+              def token_length():
+                  return sb.execute_script(
+                      "return (document.querySelector('input[name=\\\"cf-turnstile-response\\\"]') || {}).value?.length || 0"
+                  )
+              present = sb.execute_script(
+                  "return !!document.querySelector('input[name=\\\"cf-turnstile-response\\\"]')"
+              )
+              print("Turnstile response field present:", bool(present))
+              try:
+                  sb.uc_gui_click_captcha()
+                  for _ in range(16):
+                      if token_length() > 0:
+                          print("PROBE_RESULT: TOKEN_OBTAINED")
+                          break
+                      time.sleep(0.5)
+                  else:
+                      print("PROBE_RESULT: TOKEN_MISSING")
+              except Exception as exc:
+                  print("PROBE_RESULT: CLICK_ERROR", type(exc).__name__)
+          PY
